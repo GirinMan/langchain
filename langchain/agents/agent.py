@@ -19,7 +19,7 @@ from langchain.llms.base import BaseLLM
 from langchain.prompts.base import BasePromptTemplate
 from langchain.prompts.few_shot import FewShotPromptTemplate
 from langchain.prompts.prompt import PromptTemplate
-from langchain.schema import AgentAction, AgentFinish
+from langchain.schema import AgentAction, AgentFinish, BaseMessage
 from langchain.tools.base import BaseTool
 
 logger = logging.getLogger()
@@ -54,7 +54,7 @@ class Agent(BaseModel):
 
     def _construct_scratchpad(
         self, intermediate_steps: List[Tuple[AgentAction, str]]
-    ) -> str:
+    ) -> Union[str, List[BaseMessage]]:
         """Construct the scratchpad that lets the agent continue its thought process."""
         thoughts = ""
         for action, observation in intermediate_steps:
@@ -134,10 +134,6 @@ class Agent(BaseModel):
         new_inputs = {"agent_scratchpad": thoughts, "stop": self._stop}
         full_inputs = {**kwargs, **new_inputs}
         return full_inputs
-
-    def prepare_for_new_call(self) -> None:
-        """Prepare the agent for new call, if needed."""
-        pass
 
     @property
     def finish_tool_name(self) -> str:
@@ -363,6 +359,10 @@ class AgentExecutor(Chain, BaseModel):
         else:
             return self.agent.return_values
 
+    def lookup_tool(self, name: str) -> BaseTool:
+        """Lookup tool by name."""
+        return {tool.name: tool for tool in self.tools}[name]
+
     def _should_continue(self, iterations: int) -> bool:
         if self.max_iterations is None:
             return True
@@ -435,10 +435,6 @@ class AgentExecutor(Chain, BaseModel):
                 llm_prefix="",
                 observation_prefix=self.agent.observation_prefix,
             )
-            return_direct = False
-        if return_direct:
-            # Set the log to "" because we do not want to log it.
-            return AgentFinish({self.agent.return_values[0]: observation}, "")
         return output, observation
 
     async def _atake_next_step(
@@ -457,9 +453,15 @@ class AgentExecutor(Chain, BaseModel):
         # If the tool chosen is the finishing tool, then we end and return.
         if isinstance(output, AgentFinish):
             return output
-        self.callback_manager.on_agent_action(
-            output, verbose=self.verbose, color="green"
-        )
+        if self.callback_manager.is_async:
+            await self.callback_manager.on_agent_action(
+                output, verbose=self.verbose, color="green"
+            )
+        else:
+            self.callback_manager.on_agent_action(
+                output, verbose=self.verbose, color="green"
+            )
+
         # Otherwise we lookup the tool
         if output.tool in name_to_tool_map:
             tool = name_to_tool_map[output.tool]
@@ -483,15 +485,10 @@ class AgentExecutor(Chain, BaseModel):
                 observation_prefix=self.agent.observation_prefix,
             )
             return_direct = False
-        if return_direct:
-            # Set the log to "" because we do not want to log it.
-            return AgentFinish({self.agent.return_values[0]: observation}, "")
         return output, observation
 
     def _call(self, inputs: Dict[str, str]) -> Dict[str, Any]:
         """Run text through and get agent response."""
-        # Do any preparation necessary when receiving a new input.
-        self.agent.prepare_for_new_call()
         # Construct a mapping of tool name to tool for easy lookup
         name_to_tool_map = {tool.name: tool for tool in self.tools}
         # We construct a mapping from each tool to a color, used for logging.
@@ -510,6 +507,10 @@ class AgentExecutor(Chain, BaseModel):
                 return self._return(next_step_output, intermediate_steps)
 
             intermediate_steps.append(next_step_output)
+            # See if tool should return directly
+            tool_return = self._get_tool_return(next_step_output)
+            if tool_return is not None:
+                return self._return(tool_return, intermediate_steps)
             iterations += 1
         output = self.agent.return_stopped_response(
             self.early_stopping_method, intermediate_steps, **inputs
@@ -518,8 +519,6 @@ class AgentExecutor(Chain, BaseModel):
 
     async def _acall(self, inputs: Dict[str, str]) -> Dict[str, str]:
         """Run text through and get agent response."""
-        # Do any preparation necessary when receiving a new input.
-        self.agent.prepare_for_new_call()
         # Construct a mapping of tool name to tool for easy lookup
         name_to_tool_map = {tool.name: tool for tool in self.tools}
         # We construct a mapping from each tool to a color, used for logging.
@@ -538,8 +537,28 @@ class AgentExecutor(Chain, BaseModel):
                 return await self._areturn(next_step_output, intermediate_steps)
 
             intermediate_steps.append(next_step_output)
+            # See if tool should return directly
+            tool_return = self._get_tool_return(next_step_output)
+            if tool_return is not None:
+                return await self._areturn(tool_return, intermediate_steps)
+
             iterations += 1
         output = self.agent.return_stopped_response(
             self.early_stopping_method, intermediate_steps, **inputs
         )
         return await self._areturn(output, intermediate_steps)
+
+    def _get_tool_return(
+        self, next_step_output: Tuple[AgentAction, str]
+    ) -> Optional[AgentFinish]:
+        """Check if the tool is a returning tool."""
+        agent_action, observation = next_step_output
+        name_to_tool_map = {tool.name: tool for tool in self.tools}
+        # Invalid tools won't be in the map, so we return False.
+        if agent_action.tool in name_to_tool_map:
+            if name_to_tool_map[agent_action.tool].return_direct:
+                return AgentFinish(
+                    {self.agent.return_values[0]: observation},
+                    "",
+                )
+        return None

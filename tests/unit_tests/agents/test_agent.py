@@ -230,6 +230,36 @@ def test_agent_tool_return_direct() -> None:
     assert output == "misalignment"
 
 
+def test_agent_tool_return_direct_in_intermediate_steps() -> None:
+    """Test agent using tools that return directly."""
+    tool = "Search"
+    responses = [
+        f"FooBarBaz\nAction: {tool}\nAction Input: misalignment",
+        "Oh well\nAction: Final Answer\nAction Input: curses foiled again",
+    ]
+    fake_llm = FakeListLLM(responses=responses)
+    tools = [
+        Tool(
+            name="Search",
+            func=lambda x: x,
+            description="Useful for searching",
+            return_direct=True,
+        ),
+    ]
+    agent = initialize_agent(
+        tools,
+        fake_llm,
+        agent="zero-shot-react-description",
+        return_intermediate_steps=True,
+    )
+
+    resp = agent("when was langchain made")
+    assert resp["output"] == "misalignment"
+    assert len(resp["intermediate_steps"]) == 1
+    action, _action_intput = resp["intermediate_steps"][0]
+    assert action.tool == "Search"
+
+
 def test_agent_with_new_prefix_suffix() -> None:
     """Test agent initilization kwargs with new prefix and suffix."""
     fake_llm = FakeListLLM(
@@ -259,3 +289,25 @@ def test_agent_with_new_prefix_suffix() -> None:
     prompt_str = agent.agent.llm_chain.prompt.template
     assert prompt_str.startswith(prefix), "Prompt does not start with prefix"
     assert prompt_str.endswith(suffix), "Prompt does not end with suffix"
+
+
+def test_agent_lookup_tool() -> None:
+    """Test agent lookup tool."""
+    fake_llm = FakeListLLM(
+        responses=["FooBarBaz\nAction: Search\nAction Input: misalignment"]
+    )
+    tools = [
+        Tool(
+            name="Search",
+            func=lambda x: x,
+            description="Useful for searching",
+            return_direct=True,
+        ),
+    ]
+    agent = initialize_agent(
+        tools=tools,
+        llm=fake_llm,
+        agent="zero-shot-react-description",
+    )
+
+    assert agent.lookup_tool("Search") == tools[0]

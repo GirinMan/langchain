@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -19,8 +20,8 @@ from langchain.chains.qa_with_sources.map_reduce_prompt import (
     QUESTION_PROMPT,
 )
 from langchain.docstore.document import Document
-from langchain.llms.base import BaseLLM
 from langchain.prompts.base import BasePromptTemplate
+from langchain.schema import BaseLanguageModel
 
 
 class BaseQAWithSourcesChain(Chain, BaseModel, ABC):
@@ -38,7 +39,7 @@ class BaseQAWithSourcesChain(Chain, BaseModel, ABC):
     @classmethod
     def from_llm(
         cls,
-        llm: BaseLLM,
+        llm: BaseLanguageModel,
         document_prompt: BasePromptTemplate = EXAMPLE_PROMPT,
         question_prompt: BasePromptTemplate = QUESTION_PROMPT,
         combine_prompt: BasePromptTemplate = COMBINE_PROMPT,
@@ -65,7 +66,7 @@ class BaseQAWithSourcesChain(Chain, BaseModel, ABC):
     @classmethod
     def from_chain_type(
         cls,
-        llm: BaseLLM,
+        llm: BaseLanguageModel,
         chain_type: str = "stuff",
         chain_type_kwargs: Optional[dict] = None,
         **kwargs: Any,
@@ -116,8 +117,8 @@ class BaseQAWithSourcesChain(Chain, BaseModel, ABC):
     def _call(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
         docs = self._get_docs(inputs)
         answer, _ = self.combine_documents_chain.combine_docs(docs, **inputs)
-        if "SOURCES: " in answer:
-            answer, sources = answer.split("SOURCES: ")
+        if re.search(r"SOURCES:\s", answer):
+            answer, sources = re.split(r"SOURCES:\s", answer)
         else:
             sources = ""
         result: Dict[str, Any] = {
