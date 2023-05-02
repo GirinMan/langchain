@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import requests
 from pydantic import BaseModel, Extra, root_validator
 
+from langchain.callbacks.manager import CallbackManagerForLLMRun
 from langchain.llms.base import LLM
 from langchain.utils import get_from_dict_or_env
 
@@ -19,7 +20,7 @@ class AI21PenaltyData(BaseModel):
     applyToEmojis: bool = True
 
 
-class AI21(LLM, BaseModel):
+class AI21(LLM):
     """Wrapper around AI21 large language models.
 
     To use, you should have the environment variable ``AI21_API_KEY``
@@ -106,7 +107,12 @@ class AI21(LLM, BaseModel):
         """Return type of llm."""
         return "ai21"
 
-    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+    def _call(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+    ) -> str:
         """Call out to AI21's complete endpoint.
 
         Args:

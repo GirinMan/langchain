@@ -1,13 +1,15 @@
 """Chain that implements the ReAct paper from https://arxiv.org/pdf/2210.03629.pdf."""
-import re
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence
 
-from pydantic import BaseModel
+from pydantic import Field
 
-from langchain.agents.agent import Agent, AgentExecutor
+from langchain.agents.agent import Agent, AgentExecutor, AgentOutputParser
+from langchain.agents.agent_types import AgentType
+from langchain.agents.react.output_parser import ReActOutputParser
 from langchain.agents.react.textworld_prompt import TEXTWORLD_PROMPT
 from langchain.agents.react.wiki_prompt import WIKI_PROMPT
 from langchain.agents.tools import Tool
+from langchain.agents.utils import validate_tools_single_input
 from langchain.docstore.base import Docstore
 from langchain.docstore.document import Document
 from langchain.llms.base import BaseLLM
@@ -15,13 +17,19 @@ from langchain.prompts.base import BasePromptTemplate
 from langchain.tools.base import BaseTool
 
 
-class ReActDocstoreAgent(Agent, BaseModel):
+class ReActDocstoreAgent(Agent):
     """Agent for the ReAct chain."""
+
+    output_parser: AgentOutputParser = Field(default_factory=ReActOutputParser)
+
+    @classmethod
+    def _get_default_output_parser(cls, **kwargs: Any) -> AgentOutputParser:
+        return ReActOutputParser()
 
     @property
     def _agent_type(self) -> str:
         """Return Identifier of agent type."""
-        return "react-docstore"
+        return AgentType.REACT_DOCSTORE
 
     @classmethod
     def create_prompt(cls, tools: Sequence[BaseTool]) -> BasePromptTemplate:
@@ -30,6 +38,8 @@ class ReActDocstoreAgent(Agent, BaseModel):
 
     @classmethod
     def _validate_tools(cls, tools: Sequence[BaseTool]) -> None:
+        validate_tools_single_input(cls.__name__, tools)
+        super()._validate_tools(tools)
         if len(tools) != 2:
             raise ValueError(f"Exactly two tools must be specified, but got {tools}")
         tool_names = {tool.name for tool in tools}
@@ -37,27 +47,6 @@ class ReActDocstoreAgent(Agent, BaseModel):
             raise ValueError(
                 f"Tool names should be Lookup and Search, got {tool_names}"
             )
-
-    def _fix_text(self, text: str) -> str:
-        return text + "\nAction:"
-
-    def _extract_tool_and_input(self, text: str) -> Optional[Tuple[str, str]]:
-        action_prefix = "Action: "
-        if not text.strip().split("\n")[-1].startswith(action_prefix):
-            return None
-        action_block = text.strip().split("\n")[-1]
-
-        action_str = action_block[len(action_prefix) :]
-        # Parse out the action and the directive.
-        re_matches = re.search(r"(.*?)\[(.*?)\]", action_str)
-        if re_matches is None:
-            raise ValueError(f"Could not parse action directive: {action_str}")
-        return re_matches.group(1), re_matches.group(2)
-
-    @property
-    def finish_tool_name(self) -> str:
-        """Name of the tool of when to finish the chain."""
-        return "Finish"
 
     @property
     def observation_prefix(self) -> str:
@@ -123,7 +112,7 @@ class DocstoreExplorer:
         return self.document.page_content.split("\n\n")
 
 
-class ReActTextWorldAgent(ReActDocstoreAgent, BaseModel):
+class ReActTextWorldAgent(ReActDocstoreAgent):
     """Agent for the ReAct TextWorld chain."""
 
     @classmethod
@@ -133,6 +122,8 @@ class ReActTextWorldAgent(ReActDocstoreAgent, BaseModel):
 
     @classmethod
     def _validate_tools(cls, tools: Sequence[BaseTool]) -> None:
+        validate_tools_single_input(cls.__name__, tools)
+        super()._validate_tools(tools)
         if len(tools) != 1:
             raise ValueError(f"Exactly one tool must be specified, but got {tools}")
         tool_names = {tool.name for tool in tools}

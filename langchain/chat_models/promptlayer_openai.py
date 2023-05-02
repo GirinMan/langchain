@@ -2,13 +2,15 @@
 import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
-
+from langchain.callbacks.manager import (
+    AsyncCallbackManagerForLLMRun,
+    CallbackManagerForLLMRun,
+)
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import BaseMessage, ChatResult
 
 
-class PromptLayerChatOpenAI(ChatOpenAI, BaseModel):
+class PromptLayerChatOpenAI(ChatOpenAI):
     """Wrapper around OpenAI Chat large language models and PromptLayer.
 
     To use, you should have the ``openai`` and ``promptlayer`` python
@@ -35,13 +37,16 @@ class PromptLayerChatOpenAI(ChatOpenAI, BaseModel):
     return_pl_id: Optional[bool] = False
 
     def _generate(
-        self, messages: List[BaseMessage], stop: Optional[List[str]] = None
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
     ) -> ChatResult:
         """Call ChatOpenAI generate and then call PromptLayer API to log the request."""
         from promptlayer.utils import get_api_key, promptlayer_api_request
 
         request_start_time = datetime.datetime.now().timestamp()
-        generated_responses = super()._generate(messages, stop)
+        generated_responses = super()._generate(messages, stop, run_manager)
         request_end_time = datetime.datetime.now().timestamp()
         message_dicts, params = super()._create_message_dicts(messages, stop)
         for i, generation in enumerate(generated_responses.generations):
@@ -69,13 +74,16 @@ class PromptLayerChatOpenAI(ChatOpenAI, BaseModel):
         return generated_responses
 
     async def _agenerate(
-        self, messages: List[BaseMessage], stop: Optional[List[str]] = None
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
     ) -> ChatResult:
         """Call ChatOpenAI agenerate and then call PromptLayer to log."""
         from promptlayer.utils import get_api_key, promptlayer_api_request_async
 
         request_start_time = datetime.datetime.now().timestamp()
-        generated_responses = await super()._agenerate(messages, stop)
+        generated_responses = await super()._agenerate(messages, stop, run_manager)
         request_end_time = datetime.datetime.now().timestamp()
         message_dicts, params = super()._create_message_dicts(messages, stop)
         for i, generation in enumerate(generated_responses.generations):

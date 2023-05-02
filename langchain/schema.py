@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import (
+    Any,
+    Dict,
+    Generic,
+    List,
+    NamedTuple,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+)
 
 from pydantic import BaseModel, Extra, Field, root_validator
 
@@ -31,7 +41,7 @@ class AgentAction(NamedTuple):
     """Agent's action to take."""
 
     tool: str
-    tool_input: str
+    tool_input: Union[str, dict]
     log: str
 
 
@@ -69,6 +79,8 @@ class BaseMessage(BaseModel):
 class HumanMessage(BaseMessage):
     """Type of message that is spoken by the human."""
 
+    example: bool = False
+
     @property
     def type(self) -> str:
         """Type of the message, used for serialization."""
@@ -77,6 +89,8 @@ class HumanMessage(BaseMessage):
 
 class AIMessage(BaseMessage):
     """Type of message that is spoken by the AI."""
+
+    example: bool = False
 
     @property
     def type(self) -> str:
@@ -169,45 +183,6 @@ class PromptValue(BaseModel, ABC):
     @abstractmethod
     def to_messages(self) -> List[BaseMessage]:
         """Return prompt as messages."""
-
-
-class BaseLanguageModel(BaseModel, ABC):
-    @abstractmethod
-    def generate_prompt(
-        self, prompts: List[PromptValue], stop: Optional[List[str]] = None
-    ) -> LLMResult:
-        """Take in a list of prompt values and return an LLMResult."""
-
-    @abstractmethod
-    async def agenerate_prompt(
-        self, prompts: List[PromptValue], stop: Optional[List[str]] = None
-    ) -> LLMResult:
-        """Take in a list of prompt values and return an LLMResult."""
-
-    def get_num_tokens(self, text: str) -> int:
-        """Get the number of tokens present in the text."""
-        # TODO: this method may not be exact.
-        # TODO: this method may differ based on model (eg codex).
-        try:
-            from transformers import GPT2TokenizerFast
-        except ImportError:
-            raise ValueError(
-                "Could not import transformers python package. "
-                "This is needed in order to calculate get_num_tokens. "
-                "Please it install it with `pip install transformers`."
-            )
-        # create a GPT-3 tokenizer instance
-        tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-
-        # tokenize the text using the GPT-3 tokenizer
-        tokenized_text = tokenizer.tokenize(text)
-
-        # calculate the number of tokens in the tokenized text
-        return len(tokenized_text)
-
-    def get_num_tokens_from_messages(self, messages: List[BaseMessage]) -> int:
-        """Get the number of tokens in the message."""
-        return sum([self.get_num_tokens(get_buffer_string([m])) for m in messages])
 
 
 class BaseMemory(BaseModel, ABC):
@@ -310,24 +285,64 @@ class BaseRetriever(ABC):
             List of relevant documents
         """
 
+    @abstractmethod
+    async def aget_relevant_documents(self, query: str) -> List[Document]:
+        """Get documents relevant for a query.
+
+        Args:
+            query: string to find relevant documents for
+
+        Returns:
+            List of relevant documents
+        """
+
 
 # For backwards compatibility
 
 
 Memory = BaseMemory
 
+T = TypeVar("T")
 
-class BaseOutputParser(BaseModel, ABC):
-    """Class to parse the output of an LLM call."""
+
+class BaseOutputParser(BaseModel, ABC, Generic[T]):
+    """Class to parse the output of an LLM call.
+
+    Output parsers help structure language model responses.
+    """
 
     @abstractmethod
-    def parse(self, text: str) -> Any:
-        """Parse the output of an LLM call."""
+    def parse(self, text: str) -> T:
+        """Parse the output of an LLM call.
+
+        A method which takes in a string (assumed output of language model )
+        and parses it into some structure.
+
+        Args:
+            text: output of language model
+
+        Returns:
+            structured output
+        """
 
     def parse_with_prompt(self, completion: str, prompt: PromptValue) -> Any:
+        """Optional method to parse the output of an LLM call with a prompt.
+
+        The prompt is largely provided in the event the OutputParser wants
+        to retry or fix the output in some way, and needs information from
+        the prompt to do so.
+
+        Args:
+            completion: output of language model
+            prompt: prompt value
+
+        Returns:
+            structured output
+        """
         return self.parse(completion)
 
     def get_format_instructions(self) -> str:
+        """Instructions on how the LLM output should be formatted."""
         raise NotImplementedError
 
     @property
@@ -352,3 +367,19 @@ class OutputParserException(Exception):
     """
 
     pass
+
+
+class BaseDocumentTransformer(ABC):
+    """Base interface for transforming documents."""
+
+    @abstractmethod
+    def transform_documents(
+        self, documents: Sequence[Document], **kwargs: Any
+    ) -> Sequence[Document]:
+        """Transform a list of documents."""
+
+    @abstractmethod
+    async def atransform_documents(
+        self, documents: Sequence[Document], **kwargs: Any
+    ) -> Sequence[Document]:
+        """Asynchronously transform a list of documents."""
